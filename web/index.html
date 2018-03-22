@@ -1,132 +1,153 @@
 <!doctype html>
-<html>
-<head>
-	<meta charset="UTF-8">
-    <title>Network | DataSet</title>
+<html lang="en">
+  <head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="bootstrap-4.0.0/css/bootstrap.min.css">
     <link href="vis-4.21.0/dist/vis-network.min.css" rel="stylesheet" type="text/css"/>
 	<link rel="stylesheet" href="ionicons-2.0.1/css/ionicons.min.css">
-	
     <style type="text/css">
-        html, body {
-            font: 11pt arial;
-        }
-
-        h1 {
-            font-size: 150%;
-            margin: 5px 0;
-        }
-
-        h2 {
-            font-size: 100%;
-            margin: 5px 0;
-        }
-
-        table.view {
-            width: 100%;
-        }
-
-        table td {
-            vertical-align: top;
-        }
-
-        table table {
-            background-color: #f5f5f5;
-            border: 1px solid #e5e5e5;
-        }
-
-        table table td {
-            vertical-align: middle;
-        }
-
-        input[type=text], pre {
-            border: 1px solid lightgray;
-        }
-
-        pre {
-            margin: 0;
-            padding: 5px;
-            font-size: 10pt;
-        }
-
         #network {
             width: 100%;
             height: 400px;
             border: 1px solid lightgray;
         }
+        
+.custom-file-label:before {
+    content: attr(data-content) !important;
+}       
     </style>
+    <title>Hello, world!</title>
+  </head>
+  <body>
+      <div class="container">
+	<div class="row">
+		<div class="col-8">
+			<div id="network"></div>
+		</div>
+		<div class="col-4">
+			<form action="json" method="post">
+				<div class="custom-file">
+			  		<!--<input type="file" class="custom-file-input" id="customFile" name="customFile">-->
+			  		<input type="text" name="nodeId" id="nodeId" value="">
+					<div class="form-group">
+						<select class="custom-select" required name="firmware" id="firmware">
+						</select>
+						<div class="invalid-feedback">Example invalid custom select feedback</div>
+					</div>
+			  		<!-- <label class="custom-file-label" for="customFile" data-content="Choose file"></label>-->
+				</div>	
+				<button type="submit" class="btn btn-primary">Submit</button>						
+			</form>
 
-    <script type="text/javascript" src="vis-4.21.0/dist/vis.js"></script>
-
+		</div>
+	</div>
+	<div class="row">
+		<div class="col-12">
+			<pre id="eventSpan"></pre>
+		</div>
+	</div>
+	
+	</div>
+    <!-- Optional JavaScript -->
+    <!-- jQuery first, then Popper.js, then Bootstrap JS -->
 	<script type="text/javascript" src="jquery-3.3.1.min.js"></script>
-
+    <script src="bootstrap-4.0.0/js/bootstrap.min.js"></script>
+    <script type="text/javascript" src="vis-4.21.0/dist/vis.js"></script>
     <script type="text/javascript">
-        var nodes, edges, network;
+	$(function(){
 
-        // convenience method to stringify a JSON object
-        function toJSON(obj) {
-            return JSON.stringify(obj, null, 4);
-        }
+    // handle custom file inputs
 
-        function draw() {
-        	
-            var optionsIO = {
-				groups: {
-					pc: {
-						shape: 'icon',
-						icon: {
-							face: 'Ionicons',
-							code: '\uf380',
-							size: 50,
-							color: '#57169a'
-						}
-					},
-					node: {
-						shape: 'icon',
-						icon: {
-							face: 'Ionicons',
-							code: '\uf25c',
-							size: 50,
-							color: '#aa00ff'
-						}
+	$("input[type=file]").change(function (event) {
+		var fieldVal = event.target.files[0].name;
+		if (fieldVal != undefined || fieldVal != "") {
+			$(this).next(".custom-file-label").attr('data-content', fieldVal);
+		}
+	});
+	   
+    
+    var nodes, edges, network;
+
+    // convenience method to stringify a JSON object
+    function toJSON(obj) {
+        return JSON.stringify(obj, null, 4);
+    }
+
+    function draw() {
+    	
+        var optionsIO = {
+			groups: {
+				pc: {
+					shape: 'icon',
+					icon: {
+						face: 'Ionicons',
+						code: '\uf380',
+						size: 50,
+						color: '#57169a'
+					}
+				},
+				node: {
+					shape: 'icon',
+					icon: {
+						face: 'Ionicons',
+						code: '\uf25c',
+						size: 50,
+						color: '#aa00ff'
 					}
 				}
-			};        	
-            // create an array with nodes
-            nodes = new vis.DataSet();
+			}
+		};        	
+        // create an array with nodes
+        nodes = new vis.DataSet();
 
-            // create an array with edges
-            edges = new vis.DataSet();
+        // create an array with edges
+        edges = new vis.DataSet();
 
-            $.getJSON("/mesh", function(data){
-            	//console.log(data.edges);
-            	//console.log(data.nodes);
-            	nodes.add(data.nodes);
-            	edges.add(data.edges);
-            });
-            
-            // create a network
-            var container = document.getElementById('network');
-            var data = {
-                nodes: nodes,
-                edges: edges
-            };
-            //var options = {};
-            network = new vis.Network(container, data, optionsIO);
+        $.getJSON("/mesh", function(data){
+        	//console.log(data.edges);
+        	//console.log(data.nodes);
+        	nodes.add(data.nodes);
+        	edges.add(data.edges);
+        });
+        
+        // create a network
+        var container = document.getElementById('network');
+        var data = {
+            nodes: nodes,
+            edges: edges
+        };
+        //var options = {};
+        network = new vis.Network(container, data, optionsIO);
 
-        }
-
+        
+        network.on("click", function (params) {
+            params.event = "[original event]";
+            document.getElementById('eventSpan').innerHTML = '<h2>Click event:</h2>' + JSON.stringify(params, null, 4);
+            console.log('click event, getNodeAt returns: ' + this.getNodeAt(params.pointer.DOM));
+            var clickedNode = nodes.get(this.getNodeAt(params.pointer.DOM));
+            if(clickedNode.group == "node")
+            {
+            	console.log(clickedNode);
+            	$('#nodeId').val(clickedNode.label);
+            	$.getJSON('fw', function(data){
+            	    var html = '<option value="">Select file</option>';
+            	    var len = data.length;
+            	    for(var i = 0; i< len; i++) {
+            	        html += '<option value="' + data[i] + '">' + data[i] + '</option>';
+            	    }
+            	    $('#firmware').append(html);
+            	});
+           	}
+        });
+    }
+    
+		draw();
+	});
     </script>
     
-</head>
-
-<body onload="draw();">
-
-
-	<h2>Network</h2>
-	
-	<div id="network"></div>
-
-
-
-</body>
+  </body>
 </html>

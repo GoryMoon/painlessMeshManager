@@ -19,6 +19,9 @@
 #include <boost/filesystem.hpp>
 #include "swServer/server_http.hpp"
 
+#include <openssl/md5.h>
+
+
 using boost::asio::deadline_timer;
 using boost::asio::ip::tcp;
 using json = nlohmann::json;
@@ -47,6 +50,50 @@ using namespace std::chrono;
 using time_stamp = std::chrono::time_point<std::chrono::system_clock, std::chrono::microseconds>;
 
 using HttpServer = SimpleWeb::Server<SimpleWeb::HTTP>;
+
+
+namespace neolib
+{
+	template<class Elem, class Traits>
+	inline void hex_dump(const void* aData, std::size_t aLength, std::basic_ostream<Elem, Traits>& aStream, std::size_t aWidth = 16)
+	{
+		const char* const start = static_cast<const char*>(aData);
+		const char* const end = start + aLength;
+		const char* line = start;
+		while (line != end)
+		{
+			aStream.width(4);
+			aStream.fill('0');
+			aStream << std::hex << line - start << " : ";
+			std::size_t lineLength = std::min(aWidth, static_cast<std::size_t>(end - line));
+			for (std::size_t pass = 1; pass <= 2; ++pass)
+			{
+				for (const char* next = line; next != end && next != line + aWidth; ++next)
+				{
+					char ch = *next;
+					switch(pass)
+					{
+					case 1:
+						aStream << (ch < 32 ? '.' : ch);
+						break;
+					case 2:
+						if (next != line)
+							aStream << " ";
+						aStream.width(2);
+						aStream.fill('0');
+						aStream << std::hex << std::uppercase << static_cast<int>(static_cast<unsigned char>(ch));
+						break;
+					}
+				}
+				if (pass == 1 && lineLength != aWidth)
+					aStream << std::string(aWidth - lineLength, ' ');
+				aStream << " ";
+			}
+			aStream << std::endl;
+			line = line + lineLength;
+		}
+	}
+}
 
 
 class client
@@ -83,7 +130,6 @@ public:
 		return mesh;
 	}
 
-
 	// This function terminates all the actors to shut down the connection. It
 	// may be called by the user of the client class, or by the class itself in
 	// response to graceful termination or an unrecoverable error.
@@ -95,6 +141,70 @@ public:
 		nodeSync_timer_.cancel();
 	}
 
+	void sendOTA(uint32_t nodeId, std::string fwFile)
+	{
+		otaNodeId = nodeId;
+		std::string path( fwFile );
+		std::cout << "Open: " << path << std::endl;
+
+		if(source_file)
+		{
+			source_file.close();
+		}
+
+        source_file.open(path, std::ios_base::binary|std::ios_base::ate);
+        if(!source_file)
+        {
+            boost::mutex::scoped_lock lk(debug_mutex);
+            std::cout << __LINE__ << "Failed to open " << path << std::endl;
+            return;
+        }
+        source_file.seekg(0);
+
+        MD5_CTX mdContext;
+        MD5_Init(&mdContext);
+    	uint8_t otaMD5[MD5_DIGEST_LENGTH];
+
+        while(source_file)
+        {
+        	source_file.read(buf.c_array(), (std::streamsize)buf.size());
+        	MD5_Update(&mdContext, buf.c_array(), source_file.gcount());
+        }
+
+        MD5_Final(otaMD5,&mdContext);
+        int i;
+        std::cout << "Firmware MD5: ";
+        std::stringstream ss;
+
+        for(i = 0; i < MD5_DIGEST_LENGTH; i++)
+        {
+        	printf("%02x", otaMD5[i]);
+            ss << std::hex << (int)otaMD5[i];
+
+        }
+
+        std::string otaStr = ss.str();
+
+        std::cout << std::endl;
+
+        std::cout << otaStr << std::endl;
+        source_file.clear();
+        source_file.seekg(0, std::ios::beg);
+
+        json j;
+		j["from"] = 1;
+		j["dest"] = otaNodeId;
+		j["type"] = 7;
+		j["msg"] = {{"type",0}, {"md5", otaStr}};
+
+		std::string jString = j.dump();
+
+		std::cout << jString << std::endl;
+
+		jString += '\0';
+
+        boost::asio::async_write(socket_, boost::asio::buffer(jString), boost::bind(&client::handle_ota_write, this, boost::asio::placeholders::error));
+	}
 private:
 	void start_connect(tcp::resolver::iterator endpoint_iter)
 	{
@@ -238,6 +348,8 @@ private:
 				break;
 
 			case OTA:
+				std::cout << std::left << std::setw(25) << " Type: NodeSyncReply" << " OTA: " <<  j["msg"] << std::endl;
+				sendOTA();
 				break;
 
 			case BROADCAST:
@@ -309,157 +421,74 @@ private:
 
 	}
 
-//	void start_write()
-//	{
-//		if (stopped_)
-//			return;
-//
-//		std::cout << "Send..." << std::endl;
-//
-//		json j;
-//		j["from"] = 1;
-//		j["dest"] = 2140347777;
-//		j["type"] = 8;
-//		j["msg"] = {{"topic", "logServer"}};
-//
-//
-//		std::string jString = j.dump();
-//		jString += '\0';
-//		std::cout << jString << std::endl;
-//		boost::asio::async_write(
-//				socket_,
-//				boost::asio::buffer(jString),
-//				boost::bind(&client::handle_write, this, _1));
-//
-//	}
-//
-//	void handle_write(const boost::system::error_code& ec)
-//	{
-//		if (stopped_)
-//			return;
-//
-//		if (!ec)
-//		{
-//		}
-//		else
-//		{
-//			std::cout << "Error on heartbeat: " << ec.message() << "\n";
-//
-//			stop();
-//		}
-//	}
-
-	void sendFile()
-	{
-		std::string path( "firmware.bin");
-		std::cout << "Open: " << path << std::endl;
-        source_file.open(path, std::ios_base::binary|std::ios_base::ate);
-        if(!source_file)
-        {
-            boost::mutex::scoped_lock lk(debug_mutex);
-            std::cout << __LINE__ << "Failed to open " << path << std::endl;
-            return;
-        }
-        file_size = source_file.tellg();
-        source_file.seekg(0);
-
-  		json j;
-		j["from"] = 1;
-		j["dest"] = 2140347777;
-		j["type"] = 7;
-		j["msg"] = {{"type",0}, {"size", file_size}};
-
-		std::string jString = j.dump();
-		jString += '\0';
-
-        boost::asio::async_write(socket_, boost::asio::buffer(jString), boost::bind(&client::handle_downstream_write, this, boost::asio::placeholders::error));
-
-	}
-
-	void handle_downstream_write(const boost::system::error_code& error)
+	void handle_ota_write(const boost::system::error_code& error)
 	{
 		if (!error)
 		{
-			boost::asio::async_read_until(socket_,
-					input_buffer_,
-					'\00',
-					boost::bind(&client::handle_downstream_read,
-							this,
-							boost::asio::placeholders::error,
-							boost::asio::placeholders::bytes_transferred));
+
 		}
 		else
 		{
-			std::cout << "ERROR handle_downstream_write" << std::endl;
+			std::cout << "ERROR handle_ota_write" << std::endl;
 		}
 	}
 
-	void handle_downstream_read(const boost::system::error_code& error, const size_t& bytes_transferred)
+	void sendOTA()
 	{
-		if (!error)
+		if(source_file)
 		{
-			std::string retVal((std::istreambuf_iterator<char>(&input_buffer_)), std::istreambuf_iterator<char>());
-			json j = json::parse(retVal);
-
-			if(j["type"] == 7)
+			try {
+			source_file.read(buf.c_array(), (std::streamsize)buf.size());
+			if(source_file.gcount()<= 0)
 			{
-				if(source_file)
-				{
-					source_file.read(buf.c_array(), (std::streamsize)buf.size());
-					if(source_file.gcount()<= 0)
-					{
-						boost::mutex::scoped_lock lk(debug_mutex);
-						std::cout << "read file error" << std::endl;
-						return;
-					};
-					{
-						boost::mutex::scoped_lock lk(debug_mutex);
-						std::cout << "Send " << source_file.gcount() << "bytes, total: " << source_file.tellg() << " bytes.\r";
-					}
-					std::string b64 = base64::encode(buf.c_array(), source_file.gcount());
-
-					json j;
-					j["from"] = 1;
-					j["dest"] = 2140347777;
-					j["type"] = 7;
-					j["msg"] = {{"type",1}, {"length", b64.length()}, {"data", b64}};
-
-					std::string jString = j.dump();
-					jString += '\0';
-
-					async_write(socket_,
-						boost::asio::buffer(jString),
-						boost::bind(&client::handle_downstream_write,
-								this,//shared_from_this(),
-								boost::asio::placeholders::error));
-
-				}
-				else
-				{
-					std::cout << "File Error" << std::endl;
-					json j;
-					j["from"] = 1;
-					j["dest"] = 2140347777;
-					j["type"] = 7;
-					j["msg"] = {{"type",2}};
-
-					std::string jString = j.dump();
-					jString += '\0';
-//					std::cout << jString << std::endl;
-
-					boost::asio::async_write(socket_,
-							boost::asio::buffer(jString),
-							boost::bind(&client::handle_downstream_write, this, boost::asio::placeholders::error));
-				}
-			}
-			else
+				boost::mutex::scoped_lock lk(debug_mutex);
+				std::cout << "read file error" << std::endl;
+				return;
+			};
 			{
-				handle_downstream_write(make_error_code(boost::system::errc::success));
+				boost::mutex::scoped_lock lk(debug_mutex);
+				std::cout << "Send " << source_file.gcount() << "bytes, total: " << source_file.tellg() << " bytes.\r";
 			}
+			std::string b64 = base64::encode(buf.c_array(), source_file.gcount());
+
+			json j;
+			j["from"] = 1;
+			j["dest"] = otaNodeId;
+			j["type"] = 7;
+			j["msg"] = {{"type",1}, {"length", b64.length()}, {"data", b64}};
+
+			std::string jString = j.dump();
+			jString += '\0';
+
+			async_write(socket_,
+				boost::asio::buffer(jString),
+				boost::bind(&client::handle_ota_write,
+						this,//shared_from_this(),
+						boost::asio::placeholders::error));
+			}
+			catch(const std::exception &e)
+			{
+				std::cout << e.what() << std::endl;
+			}
+
 		}
 		else
 		{
-			std::cout << "ERROR handle_downstream_read" << std::endl;
+			std::cout << "OTA Finished!" << std::endl;
+			source_file.close();
+
+			json j;
+			j["from"] = 1;
+			j["dest"] = otaNodeId;
+			j["type"] = 7;
+			j["msg"] = {{"type",2}};
+
+			std::string jString = j.dump();
+			jString += '\0';
+
+			boost::asio::async_write(socket_,
+					boost::asio::buffer(jString),
+					boost::bind(&client::handle_ota_write, this, boost::asio::placeholders::error));
 		}
 	}
 
@@ -468,6 +497,7 @@ private:
 //		nodeSync_timer_.expires_from_now(boost::posix_time::seconds(10));
 //		nodeSync_timer_.async_wait(boost::bind(&client::nodeSyncTask, this));
 	}
+
 	void nodeSyncTask()
 	{
 		std::cout << "Send NodeSyncRequest" << std::endl;
@@ -480,13 +510,13 @@ private:
 		std::string jString = jReply.dump();
 		jString += '\0';
 //		std::cout << jString << std::endl;
+
 		boost::asio::async_write(
 				socket_,
 				boost::asio::buffer(jString),
 				boost::bind(&client::nodeSyncTimerArm, this));
 
 	}
-
 
 	void buildMeshTopology(json reply)
 	{
@@ -571,12 +601,15 @@ private:
 	std::string inData;
 	json meshNodes;
 	json meshEdges;
+	uint32_t otaNodeId = 0;
 	uint16_t nodeId = 0;
 	uint16_t edgesId = 0;
+
 };
 
 int main(int argc, char* argv[])
 {
+
 	try
 	{
 		if (argc != 3)
@@ -656,6 +689,127 @@ int main(int argc, char* argv[])
 		};
 
 
+//		server.resource["/upload"]["POST"] = [](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+//			std::string buffer;
+//			buffer.resize(131072);
+//			std::cout << "Getting File" << std::endl;
+//
+//			std::string boundary;
+//			if(!getline(request->content, boundary)) {
+//				response->write(SimpleWeb::StatusCode::client_error_bad_request);
+//				return;
+//			}
+//
+//			// go through all content parts
+//			while(true) {
+//				std::stringstream file; // std::stringstream is used as example output type
+//				std::string filename;
+//
+//				auto header = SimpleWeb::HttpHeader::parse(request->content);
+//				auto header_it = header.find("Content-Disposition");
+//
+//				if(header_it != header.end()) {
+//					std::cout << "Header" << std::endl;
+//					auto content_disposition_attributes = SimpleWeb::HttpHeader::FieldValue::SemicolonSeparatedAttributes::parse(header_it->second);
+//
+//					auto filename_it = content_disposition_attributes.find("filename");
+//					if(filename_it != content_disposition_attributes.end()) {
+//						filename = filename_it->second;
+//						std::cout << "File " << filename << std::endl;
+//						bool add_newline_next = false; // there is an extra newline before content boundary, this avoids adding this extra newline to file
+//						// store file content in variable file
+//					    MD5_CTX mdContext;
+//					    MD5_Init(&mdContext);
+//
+//
+//						while(true) {
+//							request->content.getline(&buffer[0], static_cast<std::streamsize>(buffer.size()));
+//							if(request->content.eof()) {
+//								response->write(SimpleWeb::StatusCode::client_error_bad_request);
+//								return;
+//							}
+//							auto size = request->content.gcount();
+//
+//							if(size >= 2 && (static_cast<size_t>(size - 1) == boundary.size() || static_cast<size_t>(size - 1) == boundary.size() + 2) && // last boundary ends with: --
+//							std::strncmp(buffer.c_str(), boundary.c_str(), boundary.size() - 1 /*ignore \r*/) == 0 &&
+//							buffer[static_cast<size_t>(size) - 2] == '\r') // buffer must also include \r at end
+//								break;
+//
+//							if(add_newline_next) {
+//								file.put('\n');
+//								MD5_Update(&mdContext, "\n", 1);
+//								add_newline_next = false;
+//							}
+//
+//							if(!request->content.fail()) { // got line or section that ended with newline
+//								file.write(buffer.c_str(), size - 1); // size includes newline character, but buffer does not
+//								//neolib::hex_dump(buffer.c_str(), size-2, std::cout);
+//								MD5_Update(&mdContext, buffer.c_str(), size - 1);
+//								add_newline_next = true;
+//							}
+//							else
+//							{
+//								file.write(buffer.c_str(), size);
+//								MD5_Update(&mdContext, buffer.c_str(), size);
+//							}
+//
+//							request->content.clear(); // clear stream state
+//						}
+//
+//						std::cout << "filename: " << filename << std::endl;
+//
+//
+//					    unsigned char c[MD5_DIGEST_LENGTH];
+//					    int i;
+//
+//					    MD5_Final(c,&mdContext);
+//					    for(i = 0; i < MD5_DIGEST_LENGTH; i++) printf("%02x", c[i]);
+//					}
+//					else
+//					{
+//						auto filename_it = content_disposition_attributes.find("name");
+//
+//						std::cout << "No FILE" << std::endl;
+//						bool add_newline_next = false; // there is an extra newline before content boundary, this avoids adding this extra newline to file
+//						while(true) {
+//							request->content.getline(&buffer[0], static_cast<std::streamsize>(buffer.size()));
+//							if(request->content.eof()) {
+//								response->write(SimpleWeb::StatusCode::client_error_bad_request);
+//								return;
+//							}
+//							auto size = request->content.gcount();
+//
+//							if(size >= 2 && (static_cast<size_t>(size - 1) == boundary.size() || static_cast<size_t>(size - 1) == boundary.size() + 2) && // last boundary ends with: --
+//							std::strncmp(buffer.c_str(), boundary.c_str(), boundary.size() - 1 /*ignore \r*/) == 0 &&
+//							buffer[static_cast<size_t>(size) - 2] == '\r') // buffer must also include \r at end
+//								break;
+//
+//							if(add_newline_next) {
+//								file.put('\n');
+//								add_newline_next = false;
+//							}
+//
+//							if(!request->content.fail()) { // got line or section that ended with newline
+//								file.write(buffer.c_str(), size - 1); // size includes newline character, but buffer does not
+//								add_newline_next = true;
+//							}
+//							else
+//								file.write(buffer.c_str(), size);
+//
+//							request->content.clear(); // clear stream state
+//						}
+//
+//						std::cout << "Param: " << filename_it->second<< " content: " << std::endl
+//							<< file.str() << std::endl;					}
+//				}
+//				else { // no more parts
+//					response->write(); // Write empty success response
+//					return;
+//				}
+//			}
+//		};
+
+
 //		server.resource["^/netif$"]["GET"] = [](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
 //			SimpleWeb::CaseInsensitiveMultimap header;
 //			header.emplace("Content-Type", "application/json");
@@ -676,7 +830,65 @@ int main(int argc, char* argv[])
 			response->write(json.dump(4), header);
 		};
 
+
+		server.resource["^/fw$"]["GET"] = [&](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+			SimpleWeb::CaseInsensitiveMultimap header;
+			header.emplace("Content-Type", "application/json");
+
+			json j;
+
+			boost::filesystem::path p("fw");
+			boost::filesystem::directory_iterator end_itr;
+
+			// cycle through the directory
+			for(boost::filesystem::directory_iterator itr(p); itr != end_itr; ++itr)
+			{
+				// If it's not a directory, list it. If you want to list directories too, just remove this check.
+				if (is_regular_file(itr->path())) {
+					// assign current file name to current_file and echo it out to the console.
+					std::string current_file = itr->path().string();
+					j.push_back(current_file);
+					std::cout << current_file << std::endl;
+				}
+			}
+			response->write(j.dump(4), header);
+		};
+
+		server.resource["^/json$"]["POST"] = [&](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+			try {
+			    auto fields = SimpleWeb::QueryString::parse(request->content.string());
+
+			    std::map<std::string, std::string> post;
+			    for(auto &field: fields)
+			    {
+			    	post[field.first] = field.second;
+			        std::cout << field.first << ": " << field.second << "\n";
+			    }
+
+			    if(post["nodeId"].length() < 1 || post["firmware"].length() < 1)
+			    {
+					response->write(SimpleWeb::StatusCode::success_ok, "POST DATA MISSING!");
+					return;
+			    }
+
+		        uint32_t nodeId;
+		        std::stringstream ss;
+		        ss << std::hex << post["nodeId"];
+		        ss >> nodeId;
+
+			    mesh.sendOTA(nodeId, post["firmware"]);
+
+			    response->write(SimpleWeb::StatusCode::success_ok, "Node: " + post["nodeId"] + " fw: " + post["firmware"]);
+			}
+			catch(const std::exception &e) {
+				*response << "HTTP/1.1 400 Bad Request\r\nContent-Length: " << strlen(e.what()) << "\r\n\r\n" << e.what();
+			}
+
+		};
+
 		boost::thread webServer_thread(boost::bind(&HttpServer::start, &server));
+		std::cout << "Webserver running on localhost:"  << server.config.port << std::endl;
+
 
 		mesh.start(r.resolve(tcp::resolver::query(argv[1], argv[2])));
 
