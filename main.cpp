@@ -21,6 +21,8 @@
 
 #include <openssl/md5.h>
 
+#include "meshDetect.hpp"
+
 
 using boost::asio::deadline_timer;
 using boost::asio::ip::tcp;
@@ -101,12 +103,14 @@ class client
 public:
 	client(boost::asio::io_service& io_service)
 		: stopped_(false),
-			socket_(io_service),
-			deadline_(io_service),
-			nodeSync_timer_(io_service),
-			upload_timer_(io_service),
-			file_size(0),
-			adjustTime(0)
+		  isConnected_(false),
+		  socket_(io_service),
+		  deadline_(io_service),
+		  nodeSync_timer_(io_service),
+		  upload_timer_(io_service),
+		  resolver_(io_service),
+		  file_size(0),
+		  adjustTime(0)
 	{
 		meshNodes = json::array();
 		meshEdges = json::array();
@@ -114,12 +118,16 @@ public:
 
 	// Called by the user of the client class to initiate the connection process.
 	// The endpoint iterator will have been obtained using a tcp::resolver.
-	void start(tcp::resolver::iterator endpoint_iter)
+	void start(std::string dstIP, std::string dstPort)
 	{
-		startTime = std::chrono::high_resolution_clock::now();
+		if(!isConnected_)
+		{
+			tcp::resolver::iterator endpoint_iter = resolver_.resolve(tcp::resolver::query(dstIP, dstPort));
+			startTime = std::chrono::high_resolution_clock::now();
 
-		// Start the connect actor.
-		start_connect(endpoint_iter);
+			// Start the connect actor.
+			start_connect(endpoint_iter);
+		}
 	}
 
 	json getTopology()
@@ -139,6 +147,8 @@ public:
 		socket_.close();
 		deadline_.cancel();
 		nodeSync_timer_.cancel();
+		isConnected_ = false;
+
 	}
 
 	void sendOTA(uint32_t nodeId, std::string fwFile)
@@ -159,6 +169,7 @@ public:
             std::cout << __LINE__ << "Failed to open " << path << std::endl;
             return;
         }
+        otaFileSize = source_file.tellg();
         source_file.seekg(0);
 
         MD5_CTX mdContext;
@@ -178,16 +189,13 @@ public:
 
         for(i = 0; i < MD5_DIGEST_LENGTH; i++)
         {
-        	printf("%02x", otaMD5[i]);
             ss << std::hex << (int)otaMD5[i];
-
         }
 
         std::string otaStr = ss.str();
 
-        std::cout << std::endl;
-
         std::cout << otaStr << std::endl;
+
         source_file.clear();
         source_file.seekg(0, std::ios::beg);
 
@@ -198,9 +206,6 @@ public:
 		j["msg"] = {{"type",0}, {"md5", otaStr}};
 
 		std::string jString = j.dump();
-
-		std::cout << jString << std::endl;
-
 		jString += '\0';
 
         boost::asio::async_write(socket_, boost::asio::buffer(jString), boost::bind(&client::handle_ota_write, this, boost::asio::placeholders::error));
@@ -258,6 +263,7 @@ private:
 		// Otherwise we have successfully established a connection.
 		else
 		{
+			isConnected_ = true;
 			std::cout << "Connected to " << endpoint_iter->endpoint() << "\n";
 //			nodeSyncTimerArm();
 			nodeSyncTask();
@@ -348,7 +354,7 @@ private:
 				break;
 
 			case OTA:
-				std::cout << std::left << std::setw(25) << " Type: NodeSyncReply" << " OTA: " <<  j["msg"] << std::endl;
+				std::cout << std::left << std::setw(25) << " Type: OTA" << " Msg: " <<  j["msg"] << std::endl;
 				sendOTA();
 				break;
 
@@ -444,11 +450,12 @@ private:
 				boost::mutex::scoped_lock lk(debug_mutex);
 				std::cout << "read file error" << std::endl;
 				return;
-			};
-			{
-				boost::mutex::scoped_lock lk(debug_mutex);
-				std::cout << "Send " << source_file.gcount() << "bytes, total: " << source_file.tellg() << " bytes.\r";
 			}
+//			{
+//				boost::mutex::scoped_lock lk(debug_mutex);
+				std::cout << std::dec;
+				std::cout << "Send " << source_file.gcount() << " bytes\t "<<  source_file.tellg() << "/" << otaFileSize << " bytes ("<< std::to_string( ((float) source_file.tellg() / otaFileSize)*100) <<")" << std::endl;
+//			}
 			std::string b64 = base64::encode(buf.c_array(), source_file.gcount());
 
 			json j;
@@ -588,11 +595,14 @@ private:
 
 private:
 	bool stopped_;
+	bool isConnected_;
 	tcp::socket socket_;
 	boost::asio::streambuf input_buffer_;
 	deadline_timer deadline_;
 	deadline_timer nodeSync_timer_;
 	deadline_timer upload_timer_;
+	tcp::resolver resolver_;
+
     boost::array<char, 512> buf;
     std::ifstream source_file;
     size_t file_size;
@@ -602,6 +612,7 @@ private:
 	json meshNodes;
 	json meshEdges;
 	uint32_t otaNodeId = 0;
+	uint32_t otaFileSize = 0;
 	uint16_t nodeId = 0;
 	uint16_t edgesId = 0;
 
@@ -612,11 +623,11 @@ int main(int argc, char* argv[])
 
 	try
 	{
-		if (argc != 3)
-		{
-			std::cerr << "Usage: client <nodeIP> <meshPort>\n";
-			return 1;
-		}
+//		if (argc != 3)
+//		{
+//			std::cerr << "Usage: client <nodeIP> <meshPort>\n";
+//			return 1;
+//		}
 
 
 		boost::asio::io_service io_service;
@@ -810,15 +821,14 @@ int main(int argc, char* argv[])
 //		};
 
 
-//		server.resource["^/netif$"]["GET"] = [](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
-//			SimpleWeb::CaseInsensitiveMultimap header;
-//			header.emplace("Content-Type", "application/json");
-//
-//			auto meshJ = std::make_shared<json>();
-//			findMesh(meshJ);
-//
-//			response->write((*meshJ).dump(), header);
-//		};
+		server.resource["^/netif$"]["GET"] = [](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+			SimpleWeb::CaseInsensitiveMultimap header;
+			header.emplace("Content-Type", "application/json");
+
+			auto json = findMesh();
+
+			response->write(json.dump(), header);
+		};
 
 
 		server.resource["^/mesh$"]["GET"] = [&](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
@@ -847,13 +857,34 @@ int main(int argc, char* argv[])
 				if (is_regular_file(itr->path())) {
 					// assign current file name to current_file and echo it out to the console.
 					std::string current_file = itr->path().string();
-					j.push_back(current_file);
-					std::cout << current_file << std::endl;
+					std::string filename = itr->path().filename().string();
+					if( filename[0] != '.')
+					{
+						j.push_back(current_file);
+						std::cout << current_file << std::endl;
+					}
 				}
 			}
 			response->write(j.dump(4), header);
 		};
+		server.resource["^/connect$"]["POST"] = [&](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
+			SimpleWeb::CaseInsensitiveMultimap header;
+			header.emplace("Content-Type", "application/json");
 
+			std::cout << "POST connect" << std::endl;
+		    auto fields = SimpleWeb::QueryString::parse(request->content.string());
+		    std::string dstPort = "5555";
+
+		    std::string dstIP = fields.find("dstIP")->second;
+
+			if(fields.find("dstPort") != fields.end() && fields.find("dstPort")->second != "") {
+				dstPort = fields.find("dstPort")->second;
+			}
+			mesh.start(dstIP, dstPort);
+
+		    response->write("{}", header);
+
+		};
 		server.resource["^/json$"]["POST"] = [&](std::shared_ptr<HttpServer::Response> response, std::shared_ptr<HttpServer::Request> request) {
 			try {
 			    auto fields = SimpleWeb::QueryString::parse(request->content.string());
@@ -867,7 +898,7 @@ int main(int argc, char* argv[])
 
 			    if(post["nodeId"].length() < 1 || post["firmware"].length() < 1)
 			    {
-					response->write(SimpleWeb::StatusCode::success_ok, "POST DATA MISSING!");
+					response->write(SimpleWeb::StatusCode::client_error_bad_request, "POST DATA MISSING!");
 					return;
 			    }
 
@@ -889,10 +920,9 @@ int main(int argc, char* argv[])
 		boost::thread webServer_thread(boost::bind(&HttpServer::start, &server));
 		std::cout << "Webserver running on localhost:"  << server.config.port << std::endl;
 
-
-		mesh.start(r.resolve(tcp::resolver::query(argv[1], argv[2])));
-
+	    auto work = boost::make_shared<boost::asio::io_service::work>(io_service); // Dummy load to keep io_service alive
 		io_service.run();
+		std::cout << "IOS End"<<std::endl;
 		webServer_thread.join();
 	}
 	catch (std::exception& e)

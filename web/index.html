@@ -16,44 +16,66 @@
             border: 1px solid lightgray;
         }
         
-.custom-file-label:before {
-    content: attr(data-content) !important;
-}       
+		.custom-file-label:before {
+		    content: attr(data-content) !important;
+		}       
     </style>
-    <title>Hello, world!</title>
+    <title>painlessMesh Manager</title>
   </head>
   <body>
       <div class="container">
-	<div class="row">
-		<div class="col-8">
-			<div id="network"></div>
-		</div>
-		<div class="col-4">
-			<form action="json" method="post">
-				<div class="custom-file">
-			  		<!--<input type="file" class="custom-file-input" id="customFile" name="customFile">-->
-			  		<input type="text" name="nodeId" id="nodeId" value="">
-					<div class="form-group">
-						<select class="custom-select" required name="firmware" id="firmware">
-						</select>
-						<div class="invalid-feedback">Example invalid custom select feedback</div>
+		<div class="row mt-4">
+			<div class="col-8">
+				<div id="network"></div>
+			</div>
+			<div class="col-4">
+				<form action="json" method="post" id="otaForm">
+					<div class="form-group row">
+						<label for="nodeId" class="col-sm-2 col-form-label">nodeID</label>
+						<div class="col-sm-10">
+							<input type="text" readonly class="form-control" name="nodeId" id="nodeId">
+						</div>
 					</div>
-			  		<!-- <label class="custom-file-label" for="customFile" data-content="Choose file"></label>-->
-				</div>	
-				<button type="submit" class="btn btn-primary">Submit</button>						
-			</form>
-
+					<div class="form-group row">
+						<label for="firmware" class="col-sm-2 col-form-label">File</label>
+						<div class="col-sm-10">
+							<select class="custom-select" required name="firmware" id="firmware"></select>
+						</div>
+					</div>
+					<div class="form-group row">
+						<a class="btn btn-primary" role="button" id="otaButton">Upload</a>						
+					</div>
+				</form>
+			</div>
+		</div>
+		<div class="row">
+			<div class="col-12">
+				<pre id="eventSpan"></pre>
+			</div>
 		</div>
 	</div>
-	<div class="row">
-		<div class="col-12">
-			<pre id="eventSpan"></pre>
+ 
+	<div class="modal fade bd-example-modal-lg" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true" data-backdrop="static" data-keyboard="false" id="netifModal">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title">Not connected!</h5>
+				</div>
+				<div class="modal-body">
+					<form id="netifModalForm">
+						<div class="input-group">
+							<select class="custom-select" id="netifModalSelect" name="dstIP"></select>  
+							<input type="text" class="form-control" id="netifModalPort" placeholder="Mesh Port (default: 5555)" name="dstPort">
+							<div class="input-group-append">
+								<button class="btn btn-outline-secondary" type="button" id="netifModalConnect">Connect</button>
+							</div>
+						</div>
+					</form>
+				</div>
+			</div>
 		</div>
 	</div>
-	
-	</div>
-    <!-- Optional JavaScript -->
-    <!-- jQuery first, then Popper.js, then Bootstrap JS -->
+		 
 	<script type="text/javascript" src="jquery-3.3.1.min.js"></script>
     <script src="bootstrap-4.0.0/js/bootstrap.min.js"></script>
     <script type="text/javascript" src="vis-4.21.0/dist/vis.js"></script>
@@ -69,6 +91,40 @@
 		}
 	});
 	   
+    
+	$.getJSON('netif', function(data){
+	    var html = '<option value="">Select IP</option>';
+	    var len = data.length;
+	    for(var i = 0; i< len; i++) {
+	        html += '<option value="' + data[i].Gateway + '">' + data[i].Gateway + '</option>';
+	    }
+	    $('#netifModalSelect').html(html);
+	});
+    $('#netifModal').modal('show');
+    $('#netifModalConnect').on("click", function(){
+		$.ajax({
+			type: "POST",
+			url: "connect",
+			data: $("#netifModalForm").serialize(), // serializes the form's elements.
+			success: function(data)
+			{
+				$('#netifModal').modal('hide');
+				setTimeout(function(){ draw(); }, 500);
+			}
+		});
+    });
+    
+    $('#otaButton').on("click", function(){
+		$.ajax({
+			type: "POST",
+			url: "json",
+			data: $("#otaForm").serialize(), // serializes the form's elements.
+			success: function(data)
+			{
+				alert(data);
+			}
+		});    	
+    });
     
     var nodes, edges, network;
 
@@ -145,7 +201,7 @@
         });
     }
     
-		draw();
+		
 	});
     </script>
     
