@@ -1,2 +1,7 @@
 /Debug/
 /Release/*.o
+**/build/**
+**/test/**
+.vscode
+.settings
+.DS_Store

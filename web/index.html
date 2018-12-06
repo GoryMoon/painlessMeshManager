@@ -1,209 +1,153 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <!-- Required meta tags -->
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+	<head>
+		<!-- Required meta tags -->
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 
-    <!-- Bootstrap CSS -->
-    <link rel="stylesheet" href="bootstrap-4.0.0/css/bootstrap.min.css">
-    <link href="vis-4.21.0/dist/vis-network.min.css" rel="stylesheet" type="text/css"/>
-	<link rel="stylesheet" href="ionicons-2.0.1/css/ionicons.min.css">
-    <style type="text/css">
-        #network {
-            width: 100%;
-            height: 400px;
-            border: 1px solid lightgray;
-        }
-        
-		.custom-file-label:before {
-		    content: attr(data-content) !important;
-		}       
-    </style>
-    <title>painlessMesh Manager</title>
-  </head>
-  <body>
-      <div class="container">
-		<div class="row mt-4">
-			<div class="col-8">
-				<div id="network"></div>
-			</div>
-			<div class="col-4">
-				<form action="json" method="post" id="otaForm">
-					<div class="form-group row">
-						<label for="nodeId" class="col-sm-2 col-form-label">nodeID</label>
-						<div class="col-sm-10">
-							<input type="text" readonly class="form-control" name="nodeId" id="nodeId">
-						</div>
-					</div>
-					<div class="form-group row">
-						<label for="firmware" class="col-sm-2 col-form-label">File</label>
-						<div class="col-sm-10">
-							<select class="custom-select" required name="firmware" id="firmware"></select>
-						</div>
-					</div>
-					<div class="form-group row">
-						<a class="btn btn-primary" role="button" id="otaButton">Upload</a>						
-					</div>
-				</form>
-			</div>
-		</div>
-		<div class="row">
-			<div class="col-12">
-				<pre id="eventSpan"></pre>
-			</div>
-		</div>
-	</div>
- 
-	<div class="modal fade bd-example-modal-lg" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true" data-backdrop="static" data-keyboard="false" id="netifModal">
-		<div class="modal-dialog modal-lg">
-			<div class="modal-content">
-				<div class="modal-header">
-					<h5 class="modal-title">Not connected!</h5>
+		<!-- Bootstrap CSS -->
+		<link rel="stylesheet" href="bootstrap-4.1.3/css/bootstrap.min.css">
+		<link href="vis-4.21.0/dist/vis-network.min.css" rel="stylesheet" type="text/css"/>
+		<link rel="stylesheet" href="ionicons-2.0.1/css/ionicons.min.css">
+		<style type="text/css">
+			#network {
+				width: 100%;
+				height: 400px;
+				border: 1px solid lightgray;
+			}
+			
+			.custom-file-label:before {
+				content: attr(data-content) !important;
+			}       
+		</style>
+		<title>painlessMesh Manager</title>
+	</head>
+	<body>
+      	<div class="container">
+			<h1 class="mt-3">Mesh Manager <a tooltip="Click to refresh view" class="btn btn-primary ml-3" role="button" id="update"><span style="font-size: 30px; line-height: 30px; color: #ffffff;" class="ion-ios-refresh-empty"></span></a></h1>
+			<div class="row mt-4">
+				<div class="col-8">
+					<div id="network"></div>
 				</div>
-				<div class="modal-body">
-					<form id="netifModalForm">
-						<div class="input-group">
-							<select class="custom-select" id="netifModalSelect" name="dstIP"></select>  
-							<input type="text" class="form-control" id="netifModalPort" placeholder="Mesh Port (default: 5555)" name="dstPort">
-							<div class="input-group-append">
-								<button class="btn btn-outline-secondary" type="button" id="netifModalConnect">Connect</button>
+				<div class="col-4">
+					<form action="json" method="post" id="otaForm">
+						<h3 class="mb-3">Firmware Updater</h3>
+						<div class="form-group row">
+							<label for="nodeId" class="col-sm-2 col-form-label">nodeID</label>
+							<div class="col-sm-10">
+								<input  type="text" readonly class="form-control" name="nodeId" id="nodeId">
 							</div>
+						</div>
+						<div class="row">
+							<div class="col-sm-2"></div>
+							<div class="form-group form-check col-sm-10">
+								<input class="form-check-input ml-1" type="checkbox" value="true" name="broadcast" id="broadcast">
+								<label class="form-check-label ml-4" for="broadcast">
+									Upload to all connected?
+								</label>
+							</div>
+						</div>
+						<div class="form-group row">
+							<label for="firmware" class="col-sm-2 col-form-label">File</label>
+							<div class="col-sm-9">
+								<select disabled class="custom-select" required name="firmware" id="firmware"></select>
+							</div>
+							<a class="col-sm-1 btn btn-primary disabled" role="button" id="updateFirmware"><span style="color: #ffffff;" class="ion-ios-refresh-empty"></span></a></h1>
+						</div>
+						<div class="form-group row">
+							<a class="btn btn-primary disabled" role="button" href="#" id="otaButton">Upload</a>
 						</div>
 					</form>
 				</div>
 			</div>
+			<div class="row">
+				<div class="col-12">
+					<pre class="small">Current connected devices: <span id="connectedAmount">0</span></pre>
+					<pre id="eventSpan"></pre>
+				</div>
+			</div>
 		</div>
-	</div>
-		 
-	<script type="text/javascript" src="jquery-3.3.1.min.js"></script>
-    <script src="bootstrap-4.0.0/js/bootstrap.min.js"></script>
-    <script type="text/javascript" src="vis-4.21.0/dist/vis.js"></script>
-    <script type="text/javascript">
-	$(function(){
-
-    // handle custom file inputs
-
-	$("input[type=file]").change(function (event) {
-		var fieldVal = event.target.files[0].name;
-		if (fieldVal != undefined || fieldVal != "") {
-			$(this).next(".custom-file-label").attr('data-content', fieldVal);
-		}
-	});
-	   
-    
-	$.getJSON('netif', function(data){
-	    var html = '<option value="">Select IP</option>';
-	    var len = data.length;
-	    for(var i = 0; i< len; i++) {
-	        html += '<option value="' + data[i].Gateway + '">' + data[i].Gateway + '</option>';
-	    }
-	    $('#netifModalSelect').html(html);
-	});
-    $('#netifModal').modal('show');
-    $('#netifModalConnect').on("click", function(){
-		$.ajax({
-			type: "POST",
-			url: "connect",
-			data: $("#netifModalForm").serialize(), // serializes the form's elements.
-			success: function(data)
-			{
-				$('#netifModal').modal('hide');
-				setTimeout(function(){ draw(); }, 500);
-			}
-		});
-    });
-    
-    $('#otaButton').on("click", function(){
-		$.ajax({
-			type: "POST",
-			url: "json",
-			data: $("#otaForm").serialize(), // serializes the form's elements.
-			success: function(data)
-			{
-				alert(data);
-			}
-		});    	
-    });
-    
-    var nodes, edges, network;
-
-    // convenience method to stringify a JSON object
-    function toJSON(obj) {
-        return JSON.stringify(obj, null, 4);
-    }
-
-    function draw() {
-    	
-        var optionsIO = {
-			groups: {
-				pc: {
-					shape: 'icon',
-					icon: {
-						face: 'Ionicons',
-						code: '\uf380',
-						size: 50,
-						color: '#57169a'
-					}
-				},
-				node: {
-					shape: 'icon',
-					icon: {
-						face: 'Ionicons',
-						code: '\uf25c',
-						size: 50,
-						color: '#aa00ff'
-					}
-				}
-			}
-		};        	
-        // create an array with nodes
-        nodes = new vis.DataSet();
-
-        // create an array with edges
-        edges = new vis.DataSet();
-
-        $.getJSON("/mesh", function(data){
-        	//console.log(data.edges);
-        	//console.log(data.nodes);
-        	nodes.add(data.nodes);
-        	edges.add(data.edges);
-        });
-        
-        // create a network
-        var container = document.getElementById('network');
-        var data = {
-            nodes: nodes,
-            edges: edges
-        };
-        //var options = {};
-        network = new vis.Network(container, data, optionsIO);
-
-        
-        network.on("click", function (params) {
-            params.event = "[original event]";
-            document.getElementById('eventSpan').innerHTML = '<h2>Click event:</h2>' + JSON.stringify(params, null, 4);
-            console.log('click event, getNodeAt returns: ' + this.getNodeAt(params.pointer.DOM));
-            var clickedNode = nodes.get(this.getNodeAt(params.pointer.DOM));
-            if(clickedNode.group == "node")
-            {
-            	console.log(clickedNode);
-            	$('#nodeId').val(clickedNode.label);
-            	$.getJSON('fw', function(data){
-            	    var html = '<option value="">Select file</option>';
-            	    var len = data.length;
-            	    for(var i = 0; i< len; i++) {
-            	        html += '<option value="' + data[i] + '">' + data[i] + '</option>';
-            	    }
-            	    $('#firmware').append(html);
-            	});
-           	}
-        });
-    }
-    
+	
+		<div class="modal fade bd-example-modal-lg" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true" data-backdrop="static" data-keyboard="false" id="netifModal">
+			<div class="modal-dialog modal-lg">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title">Not connected!</h5>
+					</div>
+					<div class="modal-body">
+						<form id="netifModalForm">
+							<div class="input-group">
+								<select class="custom-select" id="netifModalSelect" name="dstIP"></select>  
+								<input type="text" class="form-control" id="netifModalPort" placeholder="Mesh Port (default: 5555)" name="dstPort">
+								<div class="input-group-append">
+									<button class="btn btn-outline-secondary" type="button" id="netifModalConnect">Connect</button>
+								</div>
+							</div>
+						</form>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="modal fade" tabindex="-1" role="dialog" aria-labelledby="otaModal" aria-hidden="true" data-backdrop="static" data-keyboard="false" id="otaModal">
+			<div class="modal-dialog modal-md">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title">Updating</h5>
+					</div>
+					<div class="modal-body" id="connections">
+					</div>
+					<div hidden class="modal-footer">
+						<button type="button" class="btn btn-primary" data-dismiss="modal">Close</button>
+					</div>
+				</div>
+			</div>
+		</div>
+		<script id="template-connection" type="x-tmpl-mustache">
+			<div id="connection" class="row">
+				<div class="col-sm-12">
+					<h5 class="mb-2">
+						<i class="ion-wifi"></i>
+						{{name}}
+					</h5>
+					<div class="progress mt-1" style="height: 20px">
+						<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" aria-valuenow="{{done}}" aria-valuemin="0" aria-valuemax="100" style="min-width: 5%; width: {{done}}%;">
+							{{done}}%
+						</div>
+					</div>
+					<div class="mt-3" id="errors">
+						
+					</div>
+				</div>
+			</div>
+		</script>
+		<script id="template-connection-broadcast" type="x-tmpl-mustache">
+			<div id="connection" class="row">
+				<div class="col-sm-12">
+					<p class="small">
+						This might take some time depending on the size of the network
+					</p>
+					<div class="progress mt-1" style="height: 20px">
+						<div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" aria-valuenow="{{done}}" aria-valuemin="0" aria-valuemax="100" style="min-width: 5%; width: {{done}}%;">
+							{{done}}%
+						</div>
+					</div>
+					<div class="mt-3" id="errors">
+						
+					</div>
+				</div>
+			</div>
+		</script>
+		<script id="template-connection-error" type="x-tmpl-mustache">
+			<div class="alert alert-danger" role="alert">
+				{{ name }} errored when updateing
+			</div>
+		</script>
+			
+		<script src="jquery-3.3.1.min.js"></script>
+		<script src="bootstrap-4.1.3/js/bootstrap.min.js"></script>
+		<script src="vis-4.21.0/dist/vis.js"></script>
+		<script src="mustache.js/mustache.min.js"></script>
+		<script src="main.js"></script>
 		
-	});
-    </script>
-    
-  </body>
+	</body>
 </html>
