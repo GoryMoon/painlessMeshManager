@@ -5,3 +5,5 @@
 .vscode
 .settings
 .DS_Store
+firmware.bin
+painless-mesh-manager
